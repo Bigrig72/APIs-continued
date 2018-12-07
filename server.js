@@ -24,6 +24,7 @@ app.use(cors());
 // handle incoming requests
 app.get('/location', getLocation);
 app.get('/weather', getWeather);
+app.get('/yelp', getYelp);
 
 // handle errors
 function handleError(err, res) {
@@ -44,6 +45,20 @@ function Weather(day) {
   this.forecast = day.summary;
   this.time = new Date(day.time * 1000).toString().slice(0, 15);
 }
+
+
+// yelp model 
+
+function Yelp(businesses) {
+  this.name = businesses.name;
+  this.rating = businesses.rating;
+  this.price = businesses.price;
+  this.url = businesses.url;
+  this.image_url = businesses.image_url;
+};
+
+
+
 
 // pull from cache or make request
 function getLocation(request, response) {
@@ -69,20 +84,36 @@ function getLocation(request, response) {
 function getWeather(request, response) {
   const handler = {
     location: request.query.data,
-    cacheHit:(result) => {
+    cacheHit: (result) => {
       console.log('got some weather data from SQL')
       response.send(result.rows);
     },
-  
-    cacheMiss:() => {
+
+    cacheMiss: () => {
       Weather.fetch(request.query.data)
         .then(results => response.send(results))
         .catch(console.error);
     },
   };
-  
+
   Weather.lookup(handler);
-  }
+}
+
+function getYelp(request, response) {
+  console.log('made it in get yelp function');
+  const handler = {
+    location: request.query.data,
+    cacheHit: function (result) {
+      response.send(result.rows);
+    },
+    cacheMiss: function() {
+      Yelp.fetch(request.query.data)
+      .then(results => response.send(results))
+      .catch(console.error);
+    },
+  };
+  Yelp.lookup(handler);
+}
 
 
 // save to the database method
@@ -109,10 +140,10 @@ Location.fetchLocation = (query) => {
         // Create an instance and save it
         let location = new Location(query, data.body.results[0]);
         return location.save()
-        .then( result => {
-          location.id = result.rows[0].id
-          return location;
-        }) 
+          .then(result => {
+            location.id = result.rows[0].id
+            return location;
+          })
       }
 
     }).catch(error => handleError(error, res));
@@ -170,6 +201,42 @@ Weather.lookup = function (handler) {
       }
     })
     .catch(error => handleError(error));
+};
+
+Yelp.prototype.save = function (id) {
+  const SQL = `INSERT INTO yelps (name,rating,price,url,image_url) VALUES ($1,$2,$3,$4,$5);`;
+  const values = Object.values(this);
+  values.push(id);
+  client.query(SQL, values);
+};
+
+Yelp.fetch = function (location) {
+  const url = `https://api.yelp.com/v3/businesses/search?location=/${process.env.YELP_API_KEY}/${location.latitude},${location.longitude}`;
+
+
+  return superagent.get(url)
+    .set('Authorization', `Bearer ${process.env.YELP_API_KEY}`)
+    .then(result => {
+      const yelpSum = result.body.businesses.map(businesses => {
+        const summary = new Yelp(businesses);
+        summary.save(location.id);
+        return summary;
+      });
+      return yelpSum;
+    });
+};
+Yelp.lookup = function (handler) {
+  const SQL = `SELECT * FROM yelps WHERE name=$1`;
+  client.query(SQL, [handler.location.id])
+    .then(result => {
+      if (result.rowCount > 0) {
+        console.log('got some data from SQL yelp');
+        handler.cacheHit(result);
+      } else {
+        console.log('you got data from the api yelp');
+        handler.cacheMiss();
+      }
+    });
 };
 
 

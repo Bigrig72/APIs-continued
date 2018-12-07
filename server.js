@@ -26,6 +26,7 @@ app.get('/location', getLocation);
 app.get('/weather', getWeather);
 app.get('/yelp', getYelp);
 app.get('/movies', getMovie);
+app.get('/meetups', getMeetup);
 
 // handle errors
 function handleError(err, res) {
@@ -64,9 +65,18 @@ function Movie(data) {
   this.title = data.title;
   this.popularity = data.popularity;
   this.released_on = data.released_on;
+  this.creation
   this.image_url = 'https://image.tmdb.org/t/p/w370_and_h556_bestv2/' + data.poster_path;
 };
 
+// meet up model
+
+function Meetup(data) {
+  this.link = data.link;
+  this.name = data.name;
+  this.creation_date = new Date(data.created * 1000).toDateString();
+  this.host = data.host;
+};
 
 
 // pull from cache or make request
@@ -138,6 +148,23 @@ function getMovie(request, response) {
   };
   Movie.lookup(handler);
 }
+
+function getMeetup(request, response) {
+
+  const handler = {
+    location: request.query.data,
+    cacheHit: function(result) {
+      response.send(result.rows);
+    },
+    cacheMiss: function() {
+      Meetup.fetch(request.query.data)
+      .then(results => response.send(results))
+      .catch(console.error);
+    },
+  };
+  Meetup.lookup(handler);
+
+};
 
 
 // save to the database method
@@ -227,6 +254,7 @@ Weather.lookup = function (handler) {
     .catch(error => handleError(error));
 };
 
+
 Yelp.prototype.save = function (id) {
   const SQL = `INSERT INTO yelps (name,rating,price,url,image_url) VALUES ($1,$2,$3,$4,$5);`;
   const values = Object.values(this);
@@ -263,8 +291,9 @@ Yelp.lookup = function (handler) {
     });
 };
 
+
 Movie.prototype.save = function(id) {
-  const SQL = `INSERT INTO moviedbs (title,popularity,relese_on,image_url) VALUES ($1,$2,$3,$4);`;
+  const SQL = `INSERT INTO moviedbs (title,popularity,released_on,image_url) VALUES ($1,$2,$3,$4);`;
   const values = Object.values(this);
   values.push(id);
   client.query(SQL, values);
@@ -295,6 +324,43 @@ Movie.fetch = function(location) {
       return summary;
     });
     return movieSum;
+  })
+}
+
+
+Meetup.prototype.save = function(id) {
+const SQL = `INSERT INTO meetups (link,name,creation_date,host)
+VALUES ($1,$2,$3,$4);`;
+const values = Object.values(this);
+values.push(id);
+client.query(SQL, values);
+};
+
+Meetup.lookup = function (handler) {
+  const SQL = `SELECT * FROM meetups WHERE link=$1`;
+  client.query(SQL, [handler.location.id])
+  .then(result => {
+    if (result.rowCount > 0) {
+      console.log('got data from sql meetups');
+      handler.cacheHit(result);
+    } else {
+      console.log('got data from the api meetups')
+      handler.cacheMiss();
+    }
+  });
+};
+
+Meetup.fetch = function(location) {
+  const url = `https://api.meetup.com/2/open_events?&key=${process.env.MEETUP_API_KEY}&sign=true&photo-host=public&lat=${location.latitude}&topic=softwaredev&lon=${location.longitude}&page=20`;
+
+  return superagent.get(url)
+  .then(result => {
+    const meetupSum = result.body.results.map(data => {
+      const summary = new Meetup(data);
+      summary.save(location.id);
+      return summary;
+    });
+    return meetupSum;
   })
 }
 

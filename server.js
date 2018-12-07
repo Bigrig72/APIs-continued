@@ -25,6 +25,7 @@ app.use(cors());
 app.get('/location', getLocation);
 app.get('/weather', getWeather);
 app.get('/yelp', getYelp);
+app.get('/movies', getMovie);
 
 // handle errors
 function handleError(err, res) {
@@ -57,6 +58,14 @@ function Yelp(businesses) {
   this.image_url = businesses.image_url;
 };
 
+// movies model
+
+function Movie(data) {
+  this.title = data.title;
+  this.popularity = data.popularity;
+  this.released_on = data.released_on;
+  this.image_url = 'https://image.tmdb.org/t/p/w370_and_h556_bestv2/' + data.poster_path;
+};
 
 
 
@@ -113,6 +122,21 @@ function getYelp(request, response) {
     },
   };
   Yelp.lookup(handler);
+}
+
+function getMovie(request, response) {
+  const handler = {
+    location: request.query.data,
+    cacheHit: function(result) {
+      response.send(result.rows);
+    },
+    cacheMiss: function() {
+      Movie.fetch(request.query.data)
+      .then(results => response.send(results))
+      .catch(console.error);
+    },
+  };
+  Movie.lookup(handler);
 }
 
 
@@ -239,6 +263,40 @@ Yelp.lookup = function (handler) {
     });
 };
 
+Movie.prototype.save = function(id) {
+  const SQL = `INSERT INTO moviedbs (title,popularity,relese_on,image_url) VALUES ($1,$2,$3,$4);`;
+  const values = Object.values(this);
+  values.push(id);
+  client.query(SQL, values);
+};
+
+Movie.lookup = function (handler) {
+const SQL = `SELECT * FROM moviesdbs WHERE title=$1`;
+client.query(SQL, [handler.location.id])
+.then(result => {
+  if (result.rowCount > 0) {
+    console.log('got data from sql movies');
+    handler.cacheHit(result);
+  } else {
+    console.log('got data from the api movies');
+    handler.cacheMiss();
+  }
+});
+};
+
+Movie.fetch = function(location) {
+  const url = `https://api.themoviedb.org/3/search/movie?api_key=${process.env.MOVIEDB_API_KEY}&query=${location.search_query}`;
+
+  return superagent.get(url)
+  .then(result => {
+    const movieSum = result.body.results.map(data =>{
+      const summary = new Movie(data);
+      summary.save(location.id);
+      return summary;
+    });
+    return movieSum;
+  })
+}
 
 
 app.listen(PORT, () => {
